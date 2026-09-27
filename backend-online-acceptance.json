@@ -1,0 +1,16 @@
+{
+  "project": 6,
+  "ok": true,
+  "checks": [
+    "未登录302、无权限403、只读账号不可写、缺CSRF不可写",
+    "真实中台页面加载，浏览器携CSRF完成业务API事务",
+    "实际重启项目服务后，数据与版本保持不变",
+    "后台服务运行正常，已设开机启动"
+  ],
+  "url": "https://douyin.fangnan.club/workbench/system-development/6/system/",
+  "sha256": {
+    "index.html": "9ac6ae3c3d57beebb94ccbc73509dedce9d6d1abd3bb82b33ab3fbc70d403c31",
+    "backend.py": "88ba4aac58fbb83e34c46978ca51a35fe24316cc95c4d4766fd27b024f511d15",
+    "seed.json": "ae87d8d568dbb25a0cf751b74acfbb5b5864eb45add4f873f6fa32cfbd5740e3"
+  }
+}

@@ -7,35 +7,101 @@
 </style></head><body>
 <header><div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20c2 2 4-2 6 0s4-2 6 0 4-2 6 0M4 15l8 3 8-3-2 5M7 15V8h10v7M12 8V3h5M10 11h4"/></svg>港口作业调度<span class="identity">PORT OPERATIONS</span></div><div class="identity">某企业 · 调度工作台<br>演示身份 douyin</div></header>
 <main class="shell"><section class="hero"><div><div class="eyebrow">OPERATIONS / CONTROL CENTER</div><h1>岸线到堆场，一屏掌握</h1><p>泊位排班 · 堆场货位 · 集卡车队 · 作业任务</p></div><div class="hero-actions"><button class="primary" id="new-task">＋ 新增作业任务</button><button id="reset" class="danger">重置演示</button></div></section>
-<div class="notice"><span><i class="dot"></i>演示数据·仅当前浏览器保存</span><span>“实时”指操作后立即重算 · 无硬件、外部接口或多人同步</span></div><div id="storage-error" class="error" role="alert"></div>
+<div class="notice"><span><i class="dot"></i>演示数据·服务端数据库保存</span><span>“实时”指操作后立即重算 · 未接真实硬件 · 多浏览器共享数据库</span></div><div id="storage-error" class="error" role="alert"></div>
 <section class="stats" id="stats"></section><section class="overview" id="overview"></section>
 <section class="panel ledger"><div class="panel-head"><div><h2>作业与资源台账</h2><small>统一登记，按规则派发与流转</small></div><span class="pill">企业：某企业</span></div><nav class="tabs" aria-label="台账切换"><button class="tab active" data-tab="tasks">作业任务</button><button class="tab" data-tab="berths">泊位排班</button><button class="tab" data-tab="yards">堆场货位</button><button class="tab" data-tab="vehicles">集卡车队</button></nav>
-<div class="toolbar"><label>关键词<input id="search" placeholder="搜索编号、名称或资源"></label><label>状态<select id="filter"></select></label><button id="add" class="primary">＋ 新增任务</button><button id="export">导出当前 CSV</button></div><div class="table-wrap" id="table"></div><div class="rule">派发规则：泊位与车辆必须空闲；同一泊位或车辆的排班采用 [开始, 结束) 区间，拒绝重叠（含已完成历史排班）。堆场须有足够剩余容量。此演示仅模拟卸船入场，预留在派发时生效，完成后转为实际库存；不按时钟自动启动或释放。</div></section><footer class="foot"><span>所有编号均为虚构 · 无 AI 算法 · 无对外传输</span><span id="updated"></span></footer></main>
+<div class="toolbar"><label>关键词<input id="search" placeholder="搜索编号、名称或资源"></label><label>状态<select id="filter"></select></label><button id="add" class="primary">＋ 新增任务</button><button id="export">导出当前 CSV</button></div><div class="table-wrap" id="table"></div><div class="rule">派发规则：泊位与车辆必须空闲；同一泊位或车辆的排班采用 [开始, 结束) 区间，拒绝重叠（含已完成历史排班）。堆场须有足够剩余容量。此演示仅模拟卸船入场，预留在派发时生效，完成后转为实际库存；不按时钟自动启动或释放。</div></section><footer class="foot"><span>所有编号均为虚构 · 无 AI 算法 · 通过同源接口保存</span><span id="updated"></span></footer></main>
 <dialog id="editor"><form id="form"><h2 id="dialog-title"></h2><div class="form-grid" id="fields"></div><div id="form-error" class="error" role="alert"></div><div class="dialog-footer"><button type="button" id="cancel">取消</button><button type="submit" class="primary">保存</button></div></form></dialog>
-<dialog id="reset-dialog"><h2>确认重置演示数据？</h2><p>将清除本应用在当前浏览器中的修改，恢复初始演示台账。此操作不可撤销。</p><div class="dialog-footer"><button id="reset-cancel">取消</button><button id="reset-confirm" class="danger">确认重置</button></div></dialog><div id="toast" role="status" aria-live="polite"></div>
-<script>
+<dialog id="reset-dialog"><h2>确认重置演示数据？</h2><p>将清除本应用在服务器数据库中的修改，恢复初始演示台账。此操作不可撤销。</p><div class="dialog-footer"><button id="reset-cancel">取消</button><button id="reset-confirm" class="danger">确认重置</button></div></dialog><div id="toast" role="status" aria-live="polite"></div>
+<script>// Embedded in each application. No localStorage business persistence or fallback.
+const backend = (() => {
+  let revision = null, initial = true, reset = false, busy = false, failed = false;
+  let seedData;
+  const endpoint = new URL('api/state', location.href.replace(/index\.html(?:\?.*)?$/, ''));
+  function failure(message) {
+    failed = true;
+    document.body.inert = true;
+    let box = document.getElementById('backend-failure');
+    if (!box) {
+      box = document.createElement('dialog'); box.id = 'backend-failure';
+      document.documentElement.append(box);
+    }
+    box.replaceChildren();
+    const title = document.createElement('h2'); title.textContent = '数据未保存';
+    const detail = document.createElement('p'); detail.textContent = message;
+    const button = document.createElement('button'); button.textContent = '刷新并读取服务器数据';
+    button.onclick = () => location.reload();
+    box.append(title, detail, button); if (!box.open) box.showModal();
+  }
+  async function request(options) {
+    try {
+      const response = await fetch(endpoint, {credentials: 'same-origin', cache: 'no-store', ...options});
+      if (!response.ok) {
+        let message = '服务器不可用或当前账号没有操作权限。';
+        try { message = (await response.json()).error || message; } catch (_) {}
+        throw Error(message);
+      }
+      return await response.json();
+    } catch (error) {
+      failure(error.message || '请求失败，请刷新核对服务器数据。');
+      throw error;
+    }
+  }
+  return {
+    async load() {
+      const result = await request(); revision = result.revision; seedData = result.seed;
+      return JSON.stringify(result.data);
+    },
+    seed() {
+      if (!initial) reset = true;
+      return structuredClone(seedData);
+    },
+    ready() { initial = false; window.backendReady = true; document.documentElement.dataset.backendReady = 'true'; },
+    async save(data) {
+      if (failed || busy || revision === null) throw Error('请等待保存完成或刷新后重试');
+      busy = true; document.body.inert = true;
+      try {
+        const csrf = document.cookie.split('; ').find(x => x.startsWith('csrftoken='))?.slice(10) || '';
+        const result = await request({method: 'POST', headers: {
+          'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf
+        }, body: JSON.stringify({revision, action: reset ? 'reset' : 'save', data,
+          context: {product: document.getElementById('shipProduct')?.value, room: document.getElementById('shipRoom')?.value}})});
+        revision = result.revision; reset = false;
+      } finally {
+        busy = false;
+        if (!failed) document.body.inert = false;
+      }
+    },
+    failure
+  };
+})();
+window.addEventListener('unhandledrejection', event => { backend.failure(event.reason?.message || '操作失败，请刷新核对'); event.preventDefault(); });
+
+(async () => {
+const backendInitial = await backend.load();
+
 'use strict';
 const KEY='development-6-port-v1', $=s=>document.querySelector(s), esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names={tasks:'任务',berths:'泊位',yards:'货位',vehicles:'车辆'}, active=t=>['已派发','执行中'].includes(t.status), clone=x=>JSON.parse(JSON.stringify(x));
 function seed(){return {version:1,updated:'初始演示数据',berths:[{id:'BW-001',name:'一号泊位'},{id:'BW-002',name:'二号泊位'},{id:'BW-003',name:'三号泊位'}],yards:[{id:'CW-001',name:'东区货位',capacity:120,used:36},{id:'CW-002',name:'西区货位',capacity:100,used:20},{id:'CW-003',name:'北区货位',capacity:80,used:12}],vehicles:[{id:'JC-001',name:'一号集卡'},{id:'JC-002',name:'二号集卡'},{id:'JC-003',name:'三号集卡'}],tasks:[{id:'ZY-001',name:'演示一号船卸船入场',qty:18,yard:'CW-001',berth:'BW-001',vehicle:'JC-001',start:'2026-09-27T08:00',end:'2026-09-27T10:00',status:'执行中'},{id:'ZY-002',name:'演示二号船卸船入场',qty:24,yard:'CW-002',berth:'',vehicle:'',start:'2026-09-27T10:00',end:'2026-09-27T12:00',status:'待派发'},{id:'ZY-003',name:'演示三号船卸船入场',qty:12,yard:'CW-003',berth:'',vehicle:'',start:'2026-09-27T13:00',end:'2026-09-27T15:00',status:'待派发'}]};}
-let state=seed(), storageBroken=false;
-try{const raw=localStorage.getItem(KEY);if(raw){const x=JSON.parse(raw);if(x.version!==1||!['tasks','berths','yards','vehicles'].every(k=>Array.isArray(x[k])))throw Error('数据格式不兼容');state=x;}}catch(e){storageBroken=true;$('#storage-error').textContent='本地数据读取失败，当前展示临时样例；请确认重置后再保存。';}
+let state=backend.seed(), storageBroken=false;
+try{const raw=backendInitial;if(raw){const x=JSON.parse(raw);if(x.version!==1||!['tasks','berths','yards','vehicles'].every(k=>Array.isArray(x[k])))throw Error('数据格式不兼容');state=x;}}catch(e){storageBroken=true;$('#storage-error').textContent='本地数据读取失败，当前展示临时样例；请确认重置后再保存。';}
 let tab='tasks',mode='',editing='',timer;
 function toast(s){$('#toast').textContent=s;clearTimeout(timer);timer=setTimeout(()=>$('#toast').textContent='',3500);}
-function commit(next){if(storageBroken)throw Error('本地存储读取异常，请先确认重置');next.updated=new Date().toLocaleString('zh-CN',{hour12:false});try{localStorage.setItem(KEY,JSON.stringify(next));}catch(e){throw Error('浏览器保存失败，本次修改未生效；请检查存储权限或容量');}state=next;render();}
+async function commit(next){if(storageBroken)throw Error('服务器数据读取异常，请先确认重置');next.updated=new Date().toLocaleString('zh-CN',{hour12:false});try{(await backend.save(next));}catch(e){throw Error('服务器保存失败，本次修改未生效；请检查存储权限或容量');}state=next;render();}
 function must(c,m){if(!c)throw Error(m);}
 function item(k,id,s=state){const r=s[k].find(x=>x.id===id);must(r,'所选资源不存在');return r;}
 function occupied(k,id,s=state){return s.tasks.find(t=>active(t)&&t[k]===id);}
 function reserved(id,s=state){return s.tasks.filter(t=>active(t)&&t.yard===id).reduce((a,t)=>a+t.qty,0);}
 function integer(v,label,zero=false){const n=Number(v);must(String(v).trim()!==''&&Number.isSafeInteger(n)&&n>=(zero?0:1)&&n<=1000000,label+'须为'+(zero?'0 至':'1 至')+' 1000000 的整数');return n;}
 function validTime(t){must(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(t.start)&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(t.end)&&Number.isFinite(Date.parse(t.start))&&Number.isFinite(Date.parse(t.end))&&t.start<t.end,'排班结束时间必须晚于开始时间');}
-function saveRecord(kind,id,v){const s=clone(state),old=id?item(kind,id,s):null;must(!old||kind!=='tasks'||old.status==='待派发','仅待派发任务可编辑，已派发记录禁止修改');const rid=old?old.id:String(v.id||'').trim();must(/^[A-Z]{2,5}-\d{3,8}$/.test(rid),'编号须为虚构格式，如 ZY-010（大写字母-数字）');must(!s[kind].some(x=>x.id===rid&&x!==old),'编号已存在');const name=String(v.name||'').trim();must(name.length>0&&name.length<=40,'名称须为 1 至 40 字');let r={id:rid,name};if(kind==='yards'){r.capacity=integer(v.capacity,'总容量');r.used=integer(v.used,'现有库存',true);must(r.used+reserved(rid,s)<=r.capacity,'容量不足：库存加已预留数量不能超过容量');}if(kind==='tasks'){r={...r,qty:integer(v.qty,'作业数量'),yard:v.yard,start:v.start,end:v.end,berth:'',vehicle:'',status:'待派发'};item('yards',r.yard,s);validTime(r);}if(old)s[kind][s[kind].indexOf(old)]=r;else s[kind].push(r);commit(s);return rid;}
-function dispatch(id,berth,vehicle){const s=clone(state),t=item('tasks',id,s);must(t.status==='待派发','非法状态：仅待派发任务可派发');item('berths',berth,s);item('vehicles',vehicle,s);must(!occupied('berth',berth,s),'泊位已占用，不能重复派发');must(!occupied('vehicle',vehicle,s),'车辆已占用，不能重复派发');validTime(t);must(!s.tasks.some(x=>x.id!==id&&x.status!=='待派发'&&(x.berth===berth||x.vehicle===vehicle)&&t.start<x.end&&x.start<t.end),'排班时间重叠：该泊位或车辆已有排班');const y=item('yards',t.yard,s);must(y.used+reserved(t.yard,s)+t.qty<=y.capacity,'堆场剩余容量不足，派发被拒绝');t.berth=berth;t.vehicle=vehicle;t.status='已派发';commit(s);}
-function advance(id,next){const s=clone(state),t=item('tasks',id,s);must(({已派发:'执行中',执行中:'已完成'})[t.status]===next,'非法状态跳转：必须依次派发、执行、完成');if(next==='已完成'){const y=item('yards',t.yard,s);must(y.used+reserved(y.id,s)<=y.capacity,'堆场容量不足');y.used+=t.qty;}t.status=next;commit(s);toast(next==='已完成'?'作业完成，资源已释放，货位库存已更新':'任务已开始执行');}
+async function saveRecord(kind,id,v){const s=clone(state),old=id?item(kind,id,s):null;must(!old||kind!=='tasks'||old.status==='待派发','仅待派发任务可编辑，已派发记录禁止修改');const rid=old?old.id:String(v.id||'').trim();must(/^[A-Z]{2,5}-\d{3,8}$/.test(rid),'编号须为虚构格式，如 ZY-010（大写字母-数字）');must(!s[kind].some(x=>x.id===rid&&x!==old),'编号已存在');const name=String(v.name||'').trim();must(name.length>0&&name.length<=40,'名称须为 1 至 40 字');let r={id:rid,name};if(kind==='yards'){r.capacity=integer(v.capacity,'总容量');r.used=integer(v.used,'现有库存',true);must(r.used+reserved(rid,s)<=r.capacity,'容量不足：库存加已预留数量不能超过容量');}if(kind==='tasks'){r={...r,qty:integer(v.qty,'作业数量'),yard:v.yard,start:v.start,end:v.end,berth:'',vehicle:'',status:'待派发'};item('yards',r.yard,s);validTime(r);}if(old)s[kind][s[kind].indexOf(old)]=r;else s[kind].push(r);(await commit(s));return rid;}
+async function dispatch(id,berth,vehicle){const s=clone(state),t=item('tasks',id,s);must(t.status==='待派发','非法状态：仅待派发任务可派发');item('berths',berth,s);item('vehicles',vehicle,s);must(!occupied('berth',berth,s),'泊位已占用，不能重复派发');must(!occupied('vehicle',vehicle,s),'车辆已占用，不能重复派发');validTime(t);must(!s.tasks.some(x=>x.id!==id&&x.status!=='待派发'&&(x.berth===berth||x.vehicle===vehicle)&&t.start<x.end&&x.start<t.end),'排班时间重叠：该泊位或车辆已有排班');const y=item('yards',t.yard,s);must(y.used+reserved(t.yard,s)+t.qty<=y.capacity,'堆场剩余容量不足，派发被拒绝');t.berth=berth;t.vehicle=vehicle;t.status='已派发';(await commit(s));}
+async function advance(id,next){const s=clone(state),t=item('tasks',id,s);must(({已派发:'执行中',执行中:'已完成'})[t.status]===next,'非法状态跳转：必须依次派发、执行、完成');if(next==='已完成'){const y=item('yards',t.yard,s);must(y.used+reserved(y.id,s)<=y.capacity,'堆场容量不足');y.used+=t.qty;}t.status=next;(await commit(s));toast(next==='已完成'?'作业完成，资源已释放，货位库存已更新':'任务已开始执行');}
 const badge=(text,color='')=>`<span class="pill ${color}">${esc(text)}</span>`;
 function shortTime(t){return t.replace('T',' ');}
 function render(){const busy=state.tasks.filter(active),done=state.tasks.filter(t=>t.status==='已完成').length,used=state.yards.reduce((a,y)=>a+y.used,0),cap=state.yards.reduce((a,y)=>a+y.capacity,0),res=busy.reduce((a,t)=>a+t.qty,0);$('#stats').innerHTML=[['可用泊位',`${state.berths.length-busy.length} / ${state.berths.length}`,'派发至完成期间持续占用'],['空闲车辆',`${state.vehicles.length-busy.length} / ${state.vehicles.length}`,'每车同时承接一个作业'],['堆场占用',`${Math.round((used+res)/cap*100)||0}%`,`库存 ${used} · 预留 ${res} · 容量 ${cap} 箱`],['作业进度',`${done} / ${state.tasks.length}`,`已完成 · 进行中 ${busy.length} · 待派发 ${state.tasks.filter(t=>t.status==='待派发').length}`]].map((a,i)=>`<div class="stat" data-stat="${i}"><small>${a[0]}</small><strong>${a[1]}</strong><span>${a[2]}</span></div>`).join('');
-$('#overview').innerHTML=['berths','yards','vehicles'].map((k,idx)=>`<article class="panel"><div class="panel-head"><h2>${['01 泊位运行','02 堆场容量','03 集卡车队'][idx]}</h2><small>${state[k].length} 个资源</small></div><div class="resources">${state[k].map(r=>{if(k==='yards'){let n=reserved(r.id),free=r.capacity-r.used-n;return `<div class="resource"><div class="resource-top"><b>${esc(r.name)}</b>${badge('剩余 '+free+' 箱',free===0?'orange':'green')}</div><p>${esc(r.id)} · 库存 ${r.used} / 预留 ${n}</p><div class="bar"><i style="width:${r.used/r.capacity*100}%"></i><b style="width:${n/r.capacity*100}%"></b></div></div>`;}const t=occupied(k==='berths'?'berth':'vehicle',r.id);return `<div class="resource"><div class="resource-top"><b>${esc(r.name)}</b>${badge(t?t.status:'空闲',t?'orange':'green')}</div><p>${esc(r.id)} · ${t?esc(t.id)+' / '+esc(t.name):'可接受任务派发'}</p>${t?`<p>${esc(shortTime(t.start))} — ${esc(t.end.slice(11))}</p>`:''}</div>`;}).join('')}</div></article>`).join('');renderTable();$('#updated').textContent='本地更新：'+state.updated;}
+$('#overview').innerHTML=['berths','yards','vehicles'].map((k,idx)=>`<article class="panel"><div class="panel-head"><h2>${['01 泊位运行','02 堆场容量','03 集卡车队'][idx]}</h2><small>${state[k].length} 个资源</small></div><div class="resources">${state[k].map(r=>{if(k==='yards'){let n=reserved(r.id),free=r.capacity-r.used-n;return `<div class="resource"><div class="resource-top"><b>${esc(r.name)}</b>${badge('剩余 '+free+' 箱',free===0?'orange':'green')}</div><p>${esc(r.id)} · 库存 ${r.used} / 预留 ${n}</p><div class="bar"><i style="width:${r.used/r.capacity*100}%"></i><b style="width:${n/r.capacity*100}%"></b></div></div>`;}const t=occupied(k==='berths'?'berth':'vehicle',r.id);return `<div class="resource"><div class="resource-top"><b>${esc(r.name)}</b>${badge(t?t.status:'空闲',t?'orange':'green')}</div><p>${esc(r.id)} · ${t?esc(t.id)+' / '+esc(t.name):'可接受任务派发'}</p>${t?`<p>${esc(shortTime(t.start))} — ${esc(t.end.slice(11))}</p>`:''}</div>`;}).join('')}</div></article>`).join('');renderTable();$('#updated').textContent='数据库更新：'+state.updated;}
 function statusOf(r){return tab==='tasks'?r.status:tab==='yards'?(r.used+reserved(r.id)>=r.capacity?'已满':'可用'):(occupied(tab==='berths'?'berth':'vehicle',r.id)?'占用':'空闲');}
 function filtered(){const q=$('#search').value.trim().toLowerCase(),f=$('#filter').value;return state[tab].filter(r=>(!q||Object.values(r).join(' ').toLowerCase().includes(q))&&(!f||statusOf(r)===f));}
 function taskButtons(t){return t.status==='待派发'?`<button data-action="edit" data-id="${t.id}">编辑</button><button class="primary" data-action="dispatch" data-id="${t.id}">派发</button>`:t.status==='已派发'?`<button data-action="start" data-id="${t.id}">开始执行</button>`:t.status==='执行中'?`<button data-action="finish" data-id="${t.id}">完成作业</button>`:'<span class="muted">已归档</span>';}
@@ -45,12 +111,16 @@ function switchTab(k){tab=k;$('#search').value='';document.querySelectorAll('.ta
 function input(name,label,value='',type='text',extra=''){return `<label>${label}<input name="${name}" type="${type}" value="${esc(value)}" required ${extra}></label>`;}
 function select(name,label,k,value='',availability=false){return `<label class="wide">${label}<select name="${name}" required><option value="">请选择</option>${state[k].map(r=>{const t=availability?occupied(k==='berths'?'berth':'vehicle',r.id):null;return `<option value="${r.id}" ${r.id===value?'selected':''} ${t?'disabled':''}>${esc(r.id+' · '+r.name)}${availability?(t?'（占用）':'（空闲）'):''}</option>`;}).join('')}</select></label>`;}
 function openEditor(kind,id=''){mode=kind;editing=id;$('#form-error').textContent='';const r=id?item(kind==='dispatch'?'tasks':kind,id):{};$('#dialog-title').textContent=kind==='dispatch'?'指定资源并派发 · '+r.id:(id?'编辑':'新增')+names[kind];if(kind==='dispatch'){$('#fields').innerHTML=`<p class="wide muted">${esc(r.name)} · ${r.qty} 箱<br>${esc(shortTime(r.start))} 至 ${esc(shortTime(r.end))}<br>选择空闲资源，提交时同时检查历史排班冲突与堆场容量。</p>`+select('berth','指定泊位','berths','',true)+select('vehicle','指定车辆','vehicles','',true);}else{let fields=input('id','虚构编号',r.id||({tasks:'ZY-',berths:'BW-',yards:'CW-',vehicles:'JC-'}[kind]),'text',id?'readonly':'pattern="[A-Z]{2,5}-[0-9]{3,8}" maxlength="14"')+input('name','名称（企业统一为某企业）',r.name||'','text','maxlength="40"');if(kind==='tasks')fields+=input('qty','作业箱量',r.qty||1,'number','min="1" max="1000000" step="1"')+select('yard','入场货位','yards',r.yard||'')+input('start','排班开始',r.start||'2026-09-27T16:00','datetime-local')+input('end','排班结束',r.end||'2026-09-27T18:00','datetime-local');if(kind==='yards')fields+=input('capacity','总容量（箱）',r.capacity||100,'number','min="1" max="1000000"')+input('used','现有库存（箱）',r.used||0,'number','min="0" max="1000000"')+'<p class="wide muted">编辑库存视为演示人工盘点；库存加任务预留不得超过总容量。</p>';$('#fields').innerHTML=fields;}$('#editor').showModal();}
-$('#form').addEventListener('submit',e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.target));try{if(mode==='dispatch')dispatch(editing,v.berth,v.vehicle);else saveRecord(mode,editing,v);$('#editor').close();toast(mode==='dispatch'?'派发成功，泊位、车辆与货位预留已联动':'已保存至当前浏览器');}catch(e){$('#form-error').textContent=e.message;}});
+$('#form').addEventListener('submit',async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.target));try{if(mode==='dispatch')(await dispatch(editing,v.berth,v.vehicle));else (await saveRecord(mode,editing,v));$('#editor').close();toast(mode==='dispatch'?'派发成功，泊位、车辆与货位预留已联动':'已保存至服务器数据库');}catch(e){$('#form-error').textContent=e.message;}});
 $('#cancel').onclick=()=>$('#editor').close();$('#new-task').onclick=()=>openEditor('tasks');$('#add').onclick=()=>openEditor(tab);document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));$('#search').oninput=renderTable;$('#filter').onchange=renderTable;
-$('#table').onclick=e=>{const b=e.target.closest('[data-action]');if(!b)return;try{const a=b.dataset.action,id=b.dataset.id;if(a==='edit')openEditor(tab,id);if(a==='dispatch')openEditor('dispatch',id);if(a==='start')advance(id,'执行中');if(a==='finish')advance(id,'已完成');}catch(e){toast(e.message);}};
-$('#reset').onclick=()=>$('#reset-dialog').showModal();$('#reset-cancel').onclick=()=>$('#reset-dialog').close();$('#reset-confirm').onclick=()=>{const was=storageBroken;try{storageBroken=false;commit(seed());$('#storage-error').textContent='';$('#reset-dialog').close();switchTab('tasks');toast('已恢复初始演示数据');}catch(e){storageBroken=was;toast(e.message);}};
+$('#table').onclick=async e=>{const b=e.target.closest('[data-action]');if(!b)return;try{const a=b.dataset.action,id=b.dataset.id;if(a==='edit')openEditor(tab,id);if(a==='dispatch')openEditor('dispatch',id);if(a==='start')(await advance(id,'执行中'));if(a==='finish')(await advance(id,'已完成'));}catch(e){toast(e.message);}};
+$('#reset').onclick=()=>$('#reset-dialog').showModal();$('#reset-cancel').onclick=()=>$('#reset-dialog').close();$('#reset-confirm').onclick=async ()=>{const was=storageBroken;try{storageBroken=false;(await commit(backend.seed()));$('#storage-error').textContent='';$('#reset-dialog').close();switchTab('tasks');toast('已恢复初始演示数据');}catch(e){storageBroken=was;toast(e.message);}};
 function csvCell(v){let t=String(v??'');if(/^[=+\-@\t\r]/.test(t))t="'"+t;return '"'+t.replace(/"/g,'""')+'"';}
 function csvData(){const fields=tab==='tasks'?['id','name','qty','yard','start','end','berth','vehicle','status']:tab==='yards'?['id','name','capacity','used']:['id','name'];const labels={id:'虚构编号',name:'名称',qty:'箱量',yard:'货位',start:'排班开始',end:'排班结束',berth:'泊位',vehicle:'车辆',status:'状态',capacity:'总容量',used:'现有库存'};return '\uFEFF'+[[...fields.map(x=>labels[x]),'企业','当前状态',...(tab==='yards'?['预留','剩余']:[])],...filtered().map(r=>[...fields.map(k=>r[k]),'某企业',statusOf(r),...(tab==='yards'?[reserved(r.id),r.capacity-r.used-reserved(r.id)]:[])])].map(row=>row.map(csvCell).join(',')).join('\r\n');}
 $('#export').onclick=()=>{const url=URL.createObjectURL(new Blob([csvData()],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='某企业-'+names[tab]+'台账.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('已导出当前筛选 '+filtered().length+' 条记录');};
 switchTab('tasks');render();
+
+
+backend.ready();
+})().catch(error=>backend.failure(error.message));
 </script></body></html>
